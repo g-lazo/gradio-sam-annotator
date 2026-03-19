@@ -1,0 +1,17 @@
+# Datos y modelos
+files/output/
+files/fotos/
+files/pics.zip
+files/best.pt
+files/*.mp4
+files/*.pth
+
+# Mac
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
