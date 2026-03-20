@@ -182,3 +182,120 @@ class AnnotationSession:
         (pack_dir / "tasks_upload.json").write_text(json.dumps(tasks_upload, indent=2))
         print(f"Pack exportado en: {pack_dir}")
         print(f"  {len(self.image_paths)} imagenes, {sum(len(v) for v in self._annotations.values())} anotaciones")
+
+
+try:
+    import gradio as gr
+except ImportError:  # pragma: no cover
+    gr = None
+
+import argparse
+
+
+def build_ui(session: "AnnotationSession", sam: "SAMBackend", classes: list[str]):
+
+    def get_status():
+        if session.is_done():
+            return f"Terminado  |  Total: {len(session.image_paths)} imagenes"
+        total = len(session.image_paths)
+        idx = session.index
+        anns = session.get_annotations(session.current_image_path())
+        return f"Imagen {idx + 1} / {total}  |  Bboxes: {len(anns)}"
+
+    def get_rendered():
+        if session.is_done():
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        path = session.current_image_path()
+        anns = session.get_annotations(path)
+        bgr = render_image(path, anns, classes)
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    def on_click(image_rgb, evt: "gr.SelectData", selected_class):
+        if session.is_done():
+            return get_rendered(), "Sesion terminada, usa Guardar y salir"
+        if selected_class is None:
+            return get_rendered(), "Selecciona una clase primero"
+
+        x, y = evt.index[0], evt.index[1]
+        pil_image = PILImage.fromarray(image_rgb)
+        w, h = pil_image.size
+
+        bbox = sam.segment(pil_image, (x, y))
+        if bbox is None:
+            return get_rendered(), "No se detecto objeto, intenta otro punto"
+
+        session.add_annotation(selected_class, bbox, w, h)
+        return get_rendered(), get_status()
+
+    def on_undo():
+        if not session.is_done():
+            session.undo_last()
+        return get_rendered(), get_status()
+
+    def on_next():
+        session.next_image()
+        return get_rendered(), get_status()
+
+    def on_prev():
+        session.prev_image()
+        return get_rendered(), get_status()
+
+    def on_save(output_dir):
+        session.export(output_dir)
+        return get_rendered(), f"Guardado en {output_dir}/label_studio_pack"
+
+    with gr.Blocks(title="Anotador") as demo:
+        gr.Markdown("## Anotador — Click en objeto, selecciona clase, navega con los botones")
+
+        with gr.Row():
+            with gr.Column(scale=3):
+                image_display = gr.Image(
+                    value=get_rendered(),
+                    label="Imagen",
+                    interactive=True,
+                )
+            with gr.Column(scale=1):
+                class_radio = gr.Radio(choices=classes, label="Clase a anotar", value=classes[0])
+                status_label = gr.Textbox(value=get_status(), label="Estado", interactive=False)
+                undo_btn = gr.Button("Deshacer ultimo")
+                prev_btn = gr.Button("← Anterior")
+                next_btn = gr.Button("Siguiente →")
+                output_dir_input = gr.Textbox(value="./output", label="Directorio de salida")
+                save_btn = gr.Button("Guardar y salir", variant="primary")
+
+        image_display.select(on_click, inputs=[image_display, class_radio],
+                              outputs=[image_display, status_label])
+        undo_btn.click(on_undo, outputs=[image_display, status_label])
+        prev_btn.click(on_prev, outputs=[image_display, status_label])
+        next_btn.click(on_next, outputs=[image_display, status_label])
+        save_btn.click(on_save, inputs=[output_dir_input],
+                       outputs=[image_display, status_label])
+
+    return demo
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Anotador Gradio + SAM3")
+    parser.add_argument("--image_dir", required=True)
+    parser.add_argument("--output_dir", default="./output")
+    parser.add_argument("--classes", default="object", help="Clases separadas por coma")
+    parser.add_argument("--sam_model", default="facebook/sam3")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--port", type=int, default=7860)
+    args = parser.parse_args()
+
+    classes = [c.strip() for c in args.classes.split(",")]
+
+    print("Cargando SAM3...")
+    sam = SAMBackend(model_name=args.sam_model, device=args.device)
+
+    print(f"Cargando imagenes de {args.image_dir}...")
+    session = AnnotationSession(args.image_dir)
+    print(f"  {len(session.image_paths)} imagenes encontradas")
+
+    demo = build_ui(session, sam, classes)
+    demo.launch(server_name="0.0.0.0", server_port=args.port, share=False)
+
+
+if __name__ == "__main__":
+    main()
