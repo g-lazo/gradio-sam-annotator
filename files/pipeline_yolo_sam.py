@@ -97,8 +97,7 @@ class YOLOSAMPipeline:
     def __init__(
         self,
         yolo_model_path: str,
-        sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
-        sam_checkpoint: str = "sam2_hiera_large.pt",
+        sam_model: str = "facebook/sam3",
         confidence_threshold: float = 0.85,
         auto_approve_enabled: bool = False,
         device: str = "cuda",
@@ -107,78 +106,81 @@ class YOLOSAMPipeline:
         self.auto_approve_enabled = auto_approve_enabled
         self.device = device
         self._load_yolo(yolo_model_path)
-        self._load_sam(sam_model_type, sam_checkpoint)
+        self._load_sam(sam_model)
 
     def _load_yolo(self, model_path: str):
         from ultralytics import YOLO
         self.yolo = YOLO(model_path)
 
-    def _load_sam(self, model_type: str, checkpoint: str):
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        sam2 = build_sam2(model_type, checkpoint, device=self.device)
-        self.sam_predictor = SAM2ImagePredictor(sam2)
-
-    def _refine_bbox_with_sam(self, bbox_xyxy: list[float]) -> tuple[list[float], np.ndarray]:
-        x1, y1, x2, y2 = bbox_xyxy
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-
-        input_point = np.array([[center_x, center_y]])
-        input_label = np.array([1])
-        input_box = np.array([x1, y1, x2, y2])
-
-        masks, scores, _ = self.sam_predictor.predict(
-            point_coords=input_point,
-            point_labels=input_label,
-            box=input_box,
-            multimask_output=True,
-        )
-
-        best_idx = np.argmax(scores)
-        best_mask = masks[best_idx]
-
-        coords = np.where(best_mask)
-        if len(coords[0]) == 0:
-            return bbox_xyxy, best_mask
-
-        refined_bbox = [
-            float(np.min(coords[1])),
-            float(np.min(coords[0])),
-            float(np.max(coords[1])),
-            float(np.max(coords[0])),
-        ]
-
-        return refined_bbox, best_mask
+    def _load_sam(self, model_name: str):
+        import torch
+        from transformers import Sam3TrackerModel, Sam3TrackerProcessor
+        self.sam_model = Sam3TrackerModel.from_pretrained(model_name).to(self.device)
+        self.sam_processor = Sam3TrackerProcessor.from_pretrained(model_name)
 
     def process_image(self, image_path: str) -> FrameResult:
+        import torch
+        from PIL import Image as PILImage
+
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"No se pudo leer la imagen: {image_path}")
 
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil_image = PILImage.fromarray(image_rgb)
         results = self.yolo(image_rgb, verbose=False)[0]
 
         frame_result = FrameResult(image_path=image_path)
 
-        if results.boxes:
-            self.sam_predictor.set_image(image_rgb)
+        if not results.boxes:
+            return frame_result
 
-        for box in results.boxes:
+        raw_dets = [{
+            "class_id": int(box.cls[0]),
+            "class_name": self.yolo.names[int(box.cls[0])],
+            "confidence": float(box.conf[0]),
+            "bbox_xyxy": [float(c) for c in box.xyxy[0]],
+        } for box in results.boxes]
+
+        # Todos los bboxes del frame en una sola pasada por el encoder
+        input_boxes = [[d["bbox_xyxy"] for d in raw_dets]]
+        inputs = self.sam_processor(
+            images=pil_image,
+            input_boxes=input_boxes,
+            return_tensors="pt",
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.sam_model(**inputs, multimask_output=False)
+
+        masks = self.sam_processor.post_process_masks(
+            outputs.pred_masks.cpu(),
+            inputs["original_sizes"],
+        )[0]  # [num_dets, 1, H, W]
+
+        for i, raw in enumerate(raw_dets):
+            mask = masks[i, 0].numpy().astype(bool)
+            coords = np.where(mask)
+
+            if len(coords[0]) > 0:
+                refined_bbox = [
+                    float(np.min(coords[1])),
+                    float(np.min(coords[0])),
+                    float(np.max(coords[1])),
+                    float(np.max(coords[0])),
+                ]
+            else:
+                refined_bbox = raw["bbox_xyxy"]
+
             det = Detection(
-                class_id=int(box.cls[0]),
-                class_name=self.yolo.names[int(box.cls[0])],
-                confidence=float(box.conf[0]),
-                bbox_xyxy=[float(c) for c in box.xyxy[0]],
+                class_id=raw["class_id"],
+                class_name=raw["class_name"],
+                confidence=raw["confidence"],
+                bbox_xyxy=raw["bbox_xyxy"],
+                refined_bbox=refined_bbox,
+                mask=mask,
+                auto_approved=self.auto_approve_enabled and raw["confidence"] >= self.confidence_threshold,
             )
-
-            refined_bbox, mask = self._refine_bbox_with_sam(det.bbox_xyxy)
-            det.refined_bbox = refined_bbox
-            det.mask = mask
-            det.auto_approved = (
-                self.auto_approve_enabled and det.confidence >= self.confidence_threshold
-            )
-
             frame_result.detections.append(det)
 
         frame_result.all_high_confidence = (
@@ -319,12 +321,11 @@ class AnnotationExporter:
 def run_pipeline_from_video(
     video_path: str,
     yolo_model_path: str,
-    sam_checkpoint: str = "sam2_hiera_large.pt",
+    sam_model: str = "facebook/sam3",
     output_dir: str = "./pipeline_output",
     frame_interval: float = 0.5,
     confidence_threshold: float = 0.85,
     auto_approve_enabled: bool = False,
-    sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
     device: str = "cuda",
 ):
     output_base = Path(output_dir)
@@ -346,8 +347,7 @@ def run_pipeline_from_video(
     print(f"\n=== Paso 2: YOLO + SAM en {len(frame_paths)} frames ===")
     pipeline = YOLOSAMPipeline(
         yolo_model_path=yolo_model_path,
-        sam_model_type=sam_model_type,
-        sam_checkpoint=sam_checkpoint,
+        sam_model=sam_model,
         confidence_threshold=confidence_threshold,
         auto_approve_enabled=auto_approve_enabled,
         device=device,
@@ -381,11 +381,10 @@ def run_pipeline_from_video(
 def run_pipeline_from_images(
     image_dir: str,
     yolo_model_path: str,
-    sam_checkpoint: str = "sam2_hiera_large.pt",
+    sam_model: str = "facebook/sam3",
     output_dir: str = "./pipeline_output",
     confidence_threshold: float = 0.85,
     auto_approve_enabled: bool = False,
-    sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
     device: str = "cuda",
 ):
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -405,8 +404,7 @@ def run_pipeline_from_images(
     print(f"=== Procesando {len(image_paths)} imagenes ===")
     pipeline = YOLOSAMPipeline(
         yolo_model_path=yolo_model_path,
-        sam_model_type=sam_model_type,
-        sam_checkpoint=sam_checkpoint,
+        sam_model=sam_model,
         confidence_threshold=confidence_threshold,
         auto_approve_enabled=auto_approve_enabled,
         device=device,
@@ -431,6 +429,7 @@ if __name__ == "__main__":
     run_pipeline_from_images(
         image_dir="./fotos/train",
         yolo_model_path="best.pt",
+        sam_model="facebook/sam3",
         output_dir="./output",
         confidence_threshold=0.5,
         auto_approve_enabled=False,
