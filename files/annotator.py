@@ -65,6 +65,35 @@ COLORS = [
 ]
 
 
+def render_image(image_path: str, annotations: list, classes: list[str]) -> np.ndarray:
+    """
+    Draw bboxes and class labels on image copy.
+    annotations: list of (class_name, bbox_xyxy, img_w, img_h)
+    Returns BGR numpy array.
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        h, w = 480, 640
+        img = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(img, "No se pudo leer la imagen", (20, 240),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+        return img
+
+    for class_name, bbox, _, _ in annotations:
+        x1, y1, x2, y2 = [int(c) for c in bbox]
+        class_idx = classes.index(class_name) if class_name in classes else 0
+        color = COLORS[class_idx % len(COLORS)]
+
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        label = class_name
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
+        cv2.putText(img, label, (x1 + 2, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    return img
+
+
 class AnnotationSession:
 
     def __init__(self, image_dir: str):
