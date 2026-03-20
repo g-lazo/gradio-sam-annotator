@@ -36,7 +36,7 @@ class SAMBackend:
 
         masks = self.processor.post_process_masks(
             outputs.pred_masks.cpu(),
-            inputs["original_sizes"],
+            inputs["original_sizes"].cpu(),
         )[0]  # [1, 1, H, W]
 
         mask = masks[0, 0].numpy().astype(bool)
@@ -221,7 +221,8 @@ def build_ui(session: "AnnotationSession", sam: "SAMBackend", classes: list[str]
             return get_rendered(), "Selecciona una clase primero"
 
         x, y = evt.index[0], evt.index[1]
-        pil_image = PILImage.fromarray(image_rgb)
+        # Use the clean source image (not the rendered copy with boxes drawn on it)
+        pil_image = PILImage.open(session.current_image_path()).convert("RGB")
         w, h = pil_image.size
 
         bbox = sam.segment(pil_image, (x, y))
