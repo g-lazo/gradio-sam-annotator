@@ -97,8 +97,8 @@ class YOLOSAMPipeline:
     def __init__(
         self,
         yolo_model_path: str,
-        sam_model_type: str = "vit_h",
-        sam_checkpoint: str = "sam_vit_h_4b8939.pth",
+        sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
+        sam_checkpoint: str = "sam2_hiera_large.pt",
         confidence_threshold: float = 0.85,
         auto_approve_enabled: bool = False,
         device: str = "cuda",
@@ -114,10 +114,10 @@ class YOLOSAMPipeline:
         self.yolo = YOLO(model_path)
 
     def _load_sam(self, model_type: str, checkpoint: str):
-        from segment_anything import sam_model_registry, SamPredictor
-        sam = sam_model_registry[model_type](checkpoint=checkpoint)
-        sam.to(self.device)
-        self.sam_predictor = SamPredictor(sam)
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+        sam2 = build_sam2(model_type, checkpoint, device=self.device)
+        self.sam_predictor = SAM2ImagePredictor(sam2)
 
     def _refine_bbox_with_sam(self, bbox_xyxy: list[float]) -> tuple[list[float], np.ndarray]:
         x1, y1, x2, y2 = bbox_xyxy
@@ -319,12 +319,12 @@ class AnnotationExporter:
 def run_pipeline_from_video(
     video_path: str,
     yolo_model_path: str,
-    sam_checkpoint: str,
+    sam_checkpoint: str = "sam2_hiera_large.pt",
     output_dir: str = "./pipeline_output",
     frame_interval: float = 0.5,
     confidence_threshold: float = 0.85,
     auto_approve_enabled: bool = False,
-    sam_model_type: str = "vit_h",
+    sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
     device: str = "cuda",
 ):
     output_base = Path(output_dir)
@@ -381,11 +381,11 @@ def run_pipeline_from_video(
 def run_pipeline_from_images(
     image_dir: str,
     yolo_model_path: str,
-    sam_checkpoint: str,
+    sam_checkpoint: str = "sam2_hiera_large.pt",
     output_dir: str = "./pipeline_output",
     confidence_threshold: float = 0.85,
     auto_approve_enabled: bool = False,
-    sam_model_type: str = "vit_h",
+    sam_model_type: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
     device: str = "cuda",
 ):
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -428,12 +428,10 @@ def run_pipeline_from_images(
 
 
 if __name__ == "__main__":
-    run_pipeline_from_video(
-        video_path="mi_video.mp4",
+    run_pipeline_from_images(
+        image_dir="./fotos/train",
         yolo_model_path="best.pt",
-        sam_checkpoint="sam_vit_h_4b8939.pth",
-        output_dir="./pipeline_output",
-        frame_interval=0.5,
+        output_dir="./output",
         confidence_threshold=0.5,
         auto_approve_enabled=False,
     )
