@@ -121,12 +121,16 @@ class AnnotationSession:
             self.index -= 1
 
     def add_annotation(self, class_name: str, bbox_xyxy: list, img_w: int, img_h: int):
+        if self.is_done():
+            return
         path = self.current_image_path()
         if path not in self._annotations:
             self._annotations[path] = []
         self._annotations[path].append((class_name, bbox_xyxy, img_w, img_h))
 
     def undo_last(self):
+        if self.is_done():
+            return
         path = self.current_image_path()
         if self._annotations.get(path):
             self._annotations[path].pop()
