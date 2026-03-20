@@ -5,6 +5,53 @@ import numpy as np
 from pathlib import Path
 from PIL import Image as PILImage
 
+try:
+    from transformers import Sam3TrackerModel, Sam3TrackerProcessor
+except ImportError:  # pragma: no cover
+    Sam3TrackerModel = None  # type: ignore
+    Sam3TrackerProcessor = None  # type: ignore
+
+
+class SAMBackend:
+
+    def __init__(self, model_name: str = "facebook/sam3", device: str = "cuda"):
+        self.device = device
+        self.model = Sam3TrackerModel.from_pretrained(model_name).to(device)
+        self.processor = Sam3TrackerProcessor.from_pretrained(model_name)
+        self.model.eval()
+
+    def segment(self, pil_image, point_xy: tuple) -> list | None:
+        import torch
+        x, y = int(point_xy[0]), int(point_xy[1])
+
+        inputs = self.processor(
+            images=pil_image,
+            input_points=[[[x, y]]],
+            input_labels=[[1]],
+            return_tensors="pt",
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs, multimask_output=False)
+
+        masks = self.processor.post_process_masks(
+            outputs.pred_masks.cpu(),
+            inputs["original_sizes"],
+        )[0]  # [1, 1, H, W]
+
+        mask = masks[0, 0].numpy().astype(bool)
+        coords = np.where(mask)
+
+        if len(coords[0]) == 0:
+            return None
+
+        return [
+            float(np.min(coords[1])),  # x1
+            float(np.min(coords[0])),  # y1
+            float(np.max(coords[1])),  # x2
+            float(np.max(coords[0])),  # y2
+        ]
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
