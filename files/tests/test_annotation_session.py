@@ -82,3 +82,71 @@ def test_is_done_when_past_last(image_dir):
     session.next_image()
     session.next_image()
     assert session.is_done()
+
+
+def test_add_annotation_stores_entry(image_dir):
+    session = AnnotationSession(str(image_dir))
+    session.add_annotation("coca-cola", [10.0, 20.0, 50.0, 60.0], 100, 80)
+    anns = session.get_annotations(session.current_image_path())
+    assert len(anns) == 1
+    assert anns[0][0] == "coca-cola"
+    assert anns[0][1] == [10.0, 20.0, 50.0, 60.0]
+
+
+def test_undo_removes_last_annotation(image_dir):
+    session = AnnotationSession(str(image_dir))
+    session.add_annotation("coca-cola", [10.0, 20.0, 50.0, 60.0], 100, 80)
+    session.add_annotation("monster", [5.0, 5.0, 30.0, 40.0], 100, 80)
+    session.undo_last()
+    assert len(session.get_annotations(session.current_image_path())) == 1
+
+
+def test_undo_on_empty_does_nothing(image_dir):
+    session = AnnotationSession(str(image_dir))
+    session.undo_last()  # should not raise
+    assert session.get_annotations(session.current_image_path()) == []
+
+
+def test_export_creates_label_studio_pack(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.add_annotation("coca-cola", [10.0, 20.0, 50.0, 60.0], 100, 80)
+
+    session.export(str(tmp_path))
+
+    pack_dir = tmp_path / "label_studio_pack"
+    assert (pack_dir / "tasks.json").exists()
+    assert (pack_dir / "tasks_upload.json").exists()
+    assert (pack_dir / "images").is_dir()
+
+    tasks = json.loads((pack_dir / "tasks.json").read_text())
+    assert len(tasks) == 3  # all 3 images included
+
+    annotated = next(t for t in tasks if Path(t["data"]["image"]).name == "a.jpg")
+    result = annotated["predictions"][0]["result"][0]
+
+    assert result["type"] == "rectanglelabels"
+    assert result["from_name"] == "label"
+    assert result["to_name"] == "image"
+    assert result["value"]["rectanglelabels"] == ["coca-cola"]
+    assert result["score"] == 1.0
+
+    assert abs(result["value"]["x"] - 10.0) < 0.01
+    assert abs(result["value"]["y"] - 25.0) < 0.01   # 20/80*100
+    assert abs(result["value"]["width"] - 40.0) < 0.01  # (50-10)/100*100
+    assert abs(result["value"]["height"] - 50.0) < 0.01  # (60-20)/80*100
+
+
+def test_export_images_are_copied(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.export(str(tmp_path))
+    images_dir = tmp_path / "label_studio_pack" / "images"
+    copied = list(images_dir.iterdir())
+    assert len(copied) == 3
+
+
+def test_export_unannotated_image_has_empty_result(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.export(str(tmp_path))
+    tasks = json.loads((tmp_path / "label_studio_pack" / "tasks.json").read_text())
+    for task in tasks:
+        assert task["predictions"][0]["result"] == []

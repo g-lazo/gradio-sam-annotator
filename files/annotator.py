@@ -59,4 +59,50 @@ class AnnotationSession:
         return self._annotations.get(image_path, [])
 
     def export(self, output_dir: str):
-        pass  # implemented in Task 3
+        pack_dir = Path(output_dir) / "label_studio_pack"
+        images_dir = pack_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        tasks_local = []
+        tasks_upload = []
+
+        for image_path in self.image_paths:
+            src = Path(image_path)
+            dst = images_dir / src.name
+            if src != dst:
+                shutil.copy2(str(src), str(dst))
+
+            anns = self._annotations.get(image_path, [])
+            result = []
+            for idx, (class_name, bbox, img_w, img_h) in enumerate(anns):
+                x1, y1, x2, y2 = bbox
+                result.append({
+                    "id": f"{src.stem}_{idx}",
+                    "type": "rectanglelabels",
+                    "from_name": "label",
+                    "to_name": "image",
+                    "value": {
+                        "x": (x1 / img_w) * 100,
+                        "y": (y1 / img_h) * 100,
+                        "width": ((x2 - x1) / img_w) * 100,
+                        "height": ((y2 - y1) / img_h) * 100,
+                        "rectanglelabels": [class_name],
+                    },
+                    "score": 1.0,
+                })
+
+            prediction = [{"result": result}]
+
+            tasks_local.append({
+                "data": {"image": f"/data/local-files/?d=images/{src.name}"},
+                "predictions": prediction,
+            })
+            tasks_upload.append({
+                "data": {"image": src.name},
+                "predictions": prediction,
+            })
+
+        (pack_dir / "tasks.json").write_text(json.dumps(tasks_local, indent=2))
+        (pack_dir / "tasks_upload.json").write_text(json.dumps(tasks_upload, indent=2))
+        print(f"Pack exportado en: {pack_dir}")
+        print(f"  {len(self.image_paths)} imagenes, {sum(len(v) for v in self._annotations.values())} anotaciones")
