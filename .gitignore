@@ -2,6 +2,8 @@
 files/output/
 files/fotos/
 files/pics.zip
+files/pics/
+files/workspace.zip
 files/best.pt
 files/*.mp4
 files/*.pth
