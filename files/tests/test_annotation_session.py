@@ -150,3 +150,12 @@ def test_export_unannotated_image_has_empty_result(image_dir, tmp_path):
     tasks = json.loads((tmp_path / "label_studio_pack" / "tasks.json").read_text())
     for task in tasks:
         assert task["predictions"][0]["result"] == []
+
+
+def test_session_filters_dotfiles_and_underscored(tmp_path):
+    make_test_image(tmp_path / "good.jpg")
+    make_test_image(tmp_path / ".hidden.jpg")
+    make_test_image(tmp_path / "_discarded.jpg")
+    (tmp_path / ".ipynb_checkpoints").mkdir()
+    session = AnnotationSession(str(tmp_path))
+    assert len(session.image_paths) == 1

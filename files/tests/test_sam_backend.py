@@ -41,7 +41,7 @@ def mock_sam(monkeypatch):
     return mock_processor, mock_model, mock_outputs
 
 
-def test_segment_returns_none_for_empty_mask(mock_sam):
+def test_segment_returns_none_tuple_for_empty_mask(mock_sam):
     from annotator import SAMBackend
     mock_processor, mock_model, mock_outputs = mock_sam
 
@@ -50,11 +50,12 @@ def test_segment_returns_none_for_empty_mask(mock_sam):
     mock_processor.post_process_masks = MagicMock(return_value=[empty_mask])
 
     backend = SAMBackend("facebook/sam3", device="cpu")
-    result = backend.segment(make_pil_image(w, h), (100, 75))
-    assert result is None
+    bbox, mask = backend.segment(make_pil_image(w, h), (100, 75))
+    assert bbox is None
+    assert mask is None
 
 
-def test_segment_returns_bbox_from_mask(mock_sam):
+def test_segment_returns_bbox_and_mask(mock_sam):
     from annotator import SAMBackend
     mock_processor, mock_model, mock_outputs = mock_sam
 
@@ -64,11 +65,10 @@ def test_segment_returns_bbox_from_mask(mock_sam):
     mock_processor.post_process_masks = MagicMock(return_value=[mask])
 
     backend = SAMBackend("facebook/sam3", device="cpu")
-    bbox = backend.segment(make_pil_image(w, h), (60, 40))
+    bbox, returned_mask = backend.segment(make_pil_image(w, h), (60, 40))
 
     assert bbox is not None
-    x1, y1, x2, y2 = bbox
-    assert x1 == 30.0
-    assert y1 == 20.0
-    assert x2 == 90.0
-    assert y2 == 60.0
+    assert returned_mask is not None
+    assert bbox == [30.0, 20.0, 90.0, 60.0]
+    assert returned_mask.shape == (h, w)
+    assert returned_mask[40, 60] == True

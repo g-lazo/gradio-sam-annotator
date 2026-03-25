@@ -20,7 +20,7 @@ class SAMBackend:
         self.processor = Sam3TrackerProcessor.from_pretrained(model_name)
         self.model.eval()
 
-    def segment(self, pil_image, point_xy: tuple) -> list | None:
+    def segment(self, pil_image, point_xy: tuple) -> tuple[list, np.ndarray] | tuple[None, None]:
         import torch
         x, y = int(point_xy[0]), int(point_xy[1])
 
@@ -43,14 +43,15 @@ class SAMBackend:
         coords = np.where(mask)
 
         if len(coords[0]) == 0:
-            return None
+            return None, None
 
-        return [
+        bbox = [
             float(np.min(coords[1])),  # x1
             float(np.min(coords[0])),  # y1
             float(np.max(coords[1])),  # x2
             float(np.max(coords[0])),  # y2
         ]
+        return bbox, mask
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -79,7 +80,8 @@ def render_image(image_path: str, annotations: list, classes: list[str]) -> np.n
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         return img
 
-    for class_name, bbox, _, _ in annotations:
+    for ann in annotations:
+        class_name, bbox = ann[0], ann[1]
         x1, y1, x2, y2 = [int(c) for c in bbox]
         class_idx = classes.index(class_name) if class_name in classes else 0
         color = COLORS[class_idx % len(COLORS)]
@@ -97,13 +99,16 @@ def render_image(image_path: str, annotations: list, classes: list[str]) -> np.n
 class AnnotationSession:
 
     def __init__(self, image_dir: str):
+        self.image_dir = image_dir
         self.image_paths = sorted([
             str(p) for p in Path(image_dir).iterdir()
             if p.suffix.lower() in IMAGE_EXTENSIONS
+            and not p.name.startswith(".") and not p.name.startswith("_")
         ])
         self.index = 0
-        # path -> list of (class_name, bbox_xyxy, img_w, img_h)
+        # path -> list of (class_name, bbox_xyxy, img_w, img_h, mask_or_None)
         self._annotations: dict[str, list] = {}
+        self._discarded: set[str] = set()
 
     def current_image_path(self) -> str:
         return self.image_paths[self.index]
@@ -120,13 +125,13 @@ class AnnotationSession:
         if self.index > 0:
             self.index -= 1
 
-    def add_annotation(self, class_name: str, bbox_xyxy: list, img_w: int, img_h: int):
+    def add_annotation(self, class_name: str, bbox_xyxy: list, img_w: int, img_h: int, mask: np.ndarray = None):
         if self.is_done():
             return
         path = self.current_image_path()
         if path not in self._annotations:
             self._annotations[path] = []
-        self._annotations[path].append((class_name, bbox_xyxy, img_w, img_h))
+        self._annotations[path].append((class_name, bbox_xyxy, img_w, img_h, mask))
 
     def undo_last(self):
         if self.is_done():
@@ -154,7 +159,8 @@ class AnnotationSession:
 
             anns = self._annotations.get(image_path, [])
             result = []
-            for idx, (class_name, bbox, img_w, img_h) in enumerate(anns):
+            for idx, ann in enumerate(anns):
+                class_name, bbox, img_w, img_h = ann[0], ann[1], ann[2], ann[3]
                 x1, y1, x2, y2 = bbox
                 result.append({
                     "id": f"{src.stem}_{idx}",
