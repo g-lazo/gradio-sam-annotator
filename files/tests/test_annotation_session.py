@@ -181,3 +181,29 @@ def test_save_and_load_progress(image_dir, tmp_path):
 def test_load_progress_returns_false_when_no_file(image_dir, tmp_path):
     session = AnnotationSession(str(image_dir))
     assert session.load_progress(str(tmp_path)) is False
+
+
+def test_discard_image_moves_file(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    first_path = session.current_image_path()
+    first_name = Path(first_path).name
+    session.discard_image(str(tmp_path))
+    assert (tmp_path / "_descartadas" / first_name).exists()
+    assert not Path(first_path).exists()
+    assert first_path in session._discarded
+
+
+def test_discard_skips_to_next(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.discard_image(str(tmp_path))
+    assert not session.is_done()
+    assert session.current_image_path() not in session._discarded
+
+
+def test_navigation_skips_discarded(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.next_image()  # go to b.jpg
+    discarded_path = session.current_image_path()
+    session.discard_image(str(tmp_path))  # discard b.jpg
+    session.prev_image()
+    assert session.current_image_path() != discarded_path

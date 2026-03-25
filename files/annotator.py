@@ -116,14 +116,36 @@ class AnnotationSession:
     def is_done(self) -> bool:
         return self.index >= len(self.image_paths)
 
+    def _skip_discarded_forward(self):
+        while not self.is_done() and self.current_image_path() in self._discarded:
+            self.index += 1
+
+    def _skip_discarded_backward(self):
+        while self.index > 0 and self.image_paths[self.index] in self._discarded:
+            self.index -= 1
+
     def next_image(self):
-        # Allows advancing one past the last image (sentinel = done)
         if self.index < len(self.image_paths):
             self.index += 1
+        self._skip_discarded_forward()
 
     def prev_image(self):
         if self.index > 0:
             self.index -= 1
+        self._skip_discarded_backward()
+
+    def discard_image(self, output_dir: str):
+        if self.is_done():
+            return
+        path = self.current_image_path()
+        discard_dir = Path(output_dir) / "_descartadas"
+        discard_dir.mkdir(parents=True, exist_ok=True)
+        src = Path(path)
+        dst = discard_dir / src.name
+        shutil.move(str(src), str(dst))
+        self._discarded.add(path)
+        self._annotations.pop(path, None)
+        self._skip_discarded_forward()
 
     def add_annotation(self, class_name: str, bbox_xyxy: list, img_w: int, img_h: int, mask: np.ndarray = None):
         if self.is_done():
