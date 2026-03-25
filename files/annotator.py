@@ -199,7 +199,7 @@ class AnnotationSession:
             ]
         return True
 
-    def export(self, output_dir: str):
+    def export(self, output_dir: str, classes: list[str] = None):
         pack_dir = Path(output_dir) / "label_studio_pack"
         images_dir = pack_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -208,6 +208,8 @@ class AnnotationSession:
         tasks_upload = []
 
         for image_path in self.image_paths:
+            if image_path in self._discarded:
+                continue
             src = Path(image_path)
             dst = images_dir / src.name
             if src != dst:
@@ -246,8 +248,31 @@ class AnnotationSession:
 
         (pack_dir / "tasks.json").write_text(json.dumps(tasks_local, indent=2))
         (pack_dir / "tasks_upload.json").write_text(json.dumps(tasks_upload, indent=2))
+
+        # YOLO labels export
+        labels_dir = Path(output_dir) / "labels"
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        for image_path in self.image_paths:
+            if image_path in self._discarded:
+                continue
+            anns = self._annotations.get(image_path, [])
+            image_name = Path(image_path).stem
+            lines = []
+            for ann in anns:
+                class_name, bbox, img_w, img_h = ann[0], ann[1], ann[2], ann[3]
+                class_id = classes.index(class_name) if classes and class_name in classes else 0
+                x1, y1, x2, y2 = bbox
+                cx = ((x1 + x2) / 2) / img_w
+                cy = ((y1 + y2) / 2) / img_h
+                bw = (x2 - x1) / img_w
+                bh = (y2 - y1) / img_h
+                lines.append(f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+            (labels_dir / f"{image_name}.txt").write_text("\n".join(lines))
+
+        total_anns = sum(len(v) for v in self._annotations.values())
         print(f"Pack exportado en: {pack_dir}")
-        print(f"  {len(self.image_paths)} imagenes, {sum(len(v) for v in self._annotations.values())} anotaciones")
+        print(f"Labels YOLO en: {labels_dir}")
+        print(f"  {len(self.image_paths) - len(self._discarded)} imagenes, {total_anns} anotaciones")
 
 
 try:

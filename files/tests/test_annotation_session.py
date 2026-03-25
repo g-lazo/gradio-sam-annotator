@@ -207,3 +207,18 @@ def test_navigation_skips_discarded(image_dir, tmp_path):
     session.discard_image(str(tmp_path))  # discard b.jpg
     session.prev_image()
     assert session.current_image_path() != discarded_path
+
+
+def test_export_yolo_labels(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.add_annotation("coca-cola", [10.0, 20.0, 50.0, 60.0], 100, 80)
+    session.export(str(tmp_path), classes=["coca-cola", "monster"])
+
+    labels_dir = tmp_path / "labels"
+    assert labels_dir.exists()
+    label_file = labels_dir / "a.txt"
+    assert label_file.exists()
+    content = label_file.read_text().strip()
+    parts = content.split()
+    assert parts[0] == "0"
+    assert len(parts) == 5
