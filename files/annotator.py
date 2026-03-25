@@ -66,10 +66,10 @@ COLORS = [
 ]
 
 
-def render_image(image_path: str, annotations: list, classes: list[str]) -> np.ndarray:
+def render_image(image_path: str, annotations: list, classes: list[str], show_masks: bool = False) -> np.ndarray:
     """
     Draw bboxes and class labels on image copy.
-    annotations: list of (class_name, bbox_xyxy, img_w, img_h)
+    annotations: list of (class_name, bbox_xyxy, img_w, img_h, mask_or_None)
     Returns BGR numpy array.
     """
     img = cv2.imread(image_path)
@@ -82,9 +82,15 @@ def render_image(image_path: str, annotations: list, classes: list[str]) -> np.n
 
     for ann in annotations:
         class_name, bbox = ann[0], ann[1]
+        mask = ann[4] if len(ann) > 4 else None
         x1, y1, x2, y2 = [int(c) for c in bbox]
         class_idx = classes.index(class_name) if class_name in classes else 0
         color = COLORS[class_idx % len(COLORS)]
+
+        if show_masks and mask is not None:
+            overlay = img.copy()
+            overlay[mask] = color
+            img = cv2.addWeighted(img, 0.6, overlay, 0.4, 0)
 
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
         label = class_name
