@@ -397,6 +397,7 @@ def main():
     parser.add_argument("--sam_model", default="facebook/sam3")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--share", action="store_true", help="Generar link publico de Gradio")
     args = parser.parse_args()
 
     classes = [c.strip() for c in args.classes.split(",")]
@@ -415,7 +416,7 @@ def main():
         print("  Sin progreso previo, empezando de cero")
 
     demo = build_ui(session, sam, classes, args.output_dir)
-    demo.launch(server_name="0.0.0.0", server_port=args.port, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=args.port, share=args.share)
 
 
 if __name__ == "__main__":
