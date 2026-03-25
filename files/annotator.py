@@ -143,6 +143,34 @@ class AnnotationSession:
     def get_annotations(self, image_path: str) -> list:
         return self._annotations.get(image_path, [])
 
+    def save_progress(self, output_dir: str):
+        progress_path = Path(output_dir) / "progress.json"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        serializable_anns = {}
+        for path, anns in self._annotations.items():
+            serializable_anns[path] = [
+                (a[0], a[1], a[2], a[3]) for a in anns
+            ]
+        data = {
+            "index": self.index,
+            "annotations": serializable_anns,
+            "discarded": list(self._discarded),
+        }
+        progress_path.write_text(json.dumps(data, indent=2))
+
+    def load_progress(self, output_dir: str) -> bool:
+        progress_path = Path(output_dir) / "progress.json"
+        if not progress_path.exists():
+            return False
+        data = json.loads(progress_path.read_text())
+        self.index = data.get("index", 0)
+        self._discarded = set(data.get("discarded", []))
+        for path, anns in data.get("annotations", {}).items():
+            self._annotations[path] = [
+                (a[0], a[1], a[2], a[3], None) for a in anns
+            ]
+        return True
+
     def export(self, output_dir: str):
         pack_dir = Path(output_dir) / "label_studio_pack"
         images_dir = pack_dir / "images"

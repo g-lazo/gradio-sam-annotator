@@ -159,3 +159,25 @@ def test_session_filters_dotfiles_and_underscored(tmp_path):
     (tmp_path / ".ipynb_checkpoints").mkdir()
     session = AnnotationSession(str(tmp_path))
     assert len(session.image_paths) == 1
+
+
+def test_save_and_load_progress(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    session.add_annotation("coca-cola", [10.0, 20.0, 50.0, 60.0], 100, 80)
+    session.next_image()
+    session.save_progress(str(tmp_path))
+
+    assert (tmp_path / "progress.json").exists()
+
+    session2 = AnnotationSession(str(image_dir))
+    loaded = session2.load_progress(str(tmp_path))
+    assert loaded is True
+    assert session2.index == 1
+    anns = session2.get_annotations(session2.image_paths[0])
+    assert len(anns) == 1
+    assert anns[0][0] == "coca-cola"
+
+
+def test_load_progress_returns_false_when_no_file(image_dir, tmp_path):
+    session = AnnotationSession(str(image_dir))
+    assert session.load_progress(str(tmp_path)) is False
