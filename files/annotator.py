@@ -26,8 +26,8 @@ class SAMBackend:
 
         inputs = self.processor(
             images=pil_image,
-            input_points=[[[x, y]]],
-            input_labels=[[1]],
+            input_points=[[[[x, y]]]],
+            input_labels=[[[1]]],
             return_tensors="pt",
         ).to(self.device)
 
