@@ -283,58 +283,78 @@ except ImportError:  # pragma: no cover
 import argparse
 
 
-def build_ui(session: "AnnotationSession", sam: "SAMBackend", classes: list[str]):
+def build_ui(session: "AnnotationSession", sam: "SAMBackend", classes: list[str], output_dir: str):
+    show_masks_state = {"enabled": False}
 
     def get_status():
         if session.is_done():
-            return f"Terminado  |  Total: {len(session.image_paths)} imagenes"
+            annotated = sum(1 for p in session.image_paths if session.get_annotations(p))
+            return f"Terminado | Anotadas: {annotated} | Descartadas: {len(session._discarded)}"
         total = len(session.image_paths)
         idx = session.index
         anns = session.get_annotations(session.current_image_path())
-        return f"Imagen {idx + 1} / {total}  |  Bboxes: {len(anns)}"
+        annotated = sum(1 for p in session.image_paths if session.get_annotations(p))
+        return f"Imagen {idx + 1}/{total} | Anotadas: {annotated} | Descartadas: {len(session._discarded)} | Bboxes aqui: {len(anns)}"
 
     def get_rendered():
         if session.is_done():
             return np.zeros((100, 100, 3), dtype=np.uint8)
         path = session.current_image_path()
         anns = session.get_annotations(path)
-        bgr = render_image(path, anns, classes)
+        bgr = render_image(path, anns, classes, show_masks=show_masks_state["enabled"])
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    def autosave():
+        session.save_progress(output_dir)
 
     def on_click(image_rgb, evt: "gr.SelectData", selected_class):
         if session.is_done():
-            return get_rendered(), "Sesion terminada, usa Guardar y salir"
+            return get_rendered(), "Sesion terminada, usa Exportar"
         if selected_class is None:
             return get_rendered(), "Selecciona una clase primero"
 
         x, y = evt.index[0], evt.index[1]
-        # Use the clean source image (not the rendered copy with boxes drawn on it)
         pil_image = PILImage.open(session.current_image_path()).convert("RGB")
         w, h = pil_image.size
 
-        bbox = sam.segment(pil_image, (x, y))
+        bbox, mask = sam.segment(pil_image, (x, y))
         if bbox is None:
             return get_rendered(), "No se detecto objeto, intenta otro punto"
 
-        session.add_annotation(selected_class, bbox, w, h)
+        session.add_annotation(selected_class, bbox, w, h, mask)
+        autosave()
         return get_rendered(), get_status()
 
     def on_undo():
         if not session.is_done():
             session.undo_last()
+            autosave()
         return get_rendered(), get_status()
 
     def on_next():
         session.next_image()
+        autosave()
         return get_rendered(), get_status()
 
     def on_prev():
         session.prev_image()
+        autosave()
         return get_rendered(), get_status()
 
-    def on_save(output_dir):
-        session.export(output_dir)
-        return get_rendered(), f"Guardado en {output_dir}/label_studio_pack"
+    def on_discard():
+        if not session.is_done():
+            session.discard_image(output_dir)
+            autosave()
+        return get_rendered(), get_status()
+
+    def on_toggle_masks():
+        show_masks_state["enabled"] = not show_masks_state["enabled"]
+        label = "Ocultar mascaras" if show_masks_state["enabled"] else "Mostrar mascaras"
+        return get_rendered(), get_status(), label
+
+    def on_export():
+        session.export(output_dir, classes=classes)
+        return get_rendered(), f"Exportado en {output_dir}/label_studio_pack y {output_dir}/labels"
 
     with gr.Blocks(title="Anotador") as demo:
         gr.Markdown("## Anotador — Click en objeto, selecciona clase, navega con los botones")
@@ -350,18 +370,21 @@ def build_ui(session: "AnnotationSession", sam: "SAMBackend", classes: list[str]
                 class_radio = gr.Radio(choices=classes, label="Clase a anotar", value=classes[0])
                 status_label = gr.Textbox(value=get_status(), label="Estado", interactive=False)
                 undo_btn = gr.Button("Deshacer ultimo")
-                prev_btn = gr.Button("← Anterior")
-                next_btn = gr.Button("Siguiente →")
-                output_dir_input = gr.Textbox(value="./output", label="Directorio de salida")
-                save_btn = gr.Button("Guardar y salir", variant="primary")
+                discard_btn = gr.Button("Descartar imagen")
+                toggle_masks_btn = gr.Button("Mostrar mascaras")
+                with gr.Row():
+                    prev_btn = gr.Button("← Anterior")
+                    next_btn = gr.Button("Siguiente →")
+                export_btn = gr.Button("Exportar", variant="primary")
 
         image_display.select(on_click, inputs=[image_display, class_radio],
                               outputs=[image_display, status_label])
         undo_btn.click(on_undo, outputs=[image_display, status_label])
+        discard_btn.click(on_discard, outputs=[image_display, status_label])
+        toggle_masks_btn.click(on_toggle_masks, outputs=[image_display, status_label, toggle_masks_btn])
         prev_btn.click(on_prev, outputs=[image_display, status_label])
         next_btn.click(on_next, outputs=[image_display, status_label])
-        save_btn.click(on_save, inputs=[output_dir_input],
-                       outputs=[image_display, status_label])
+        export_btn.click(on_export, outputs=[image_display, status_label])
 
     return demo
 
@@ -385,7 +408,13 @@ def main():
     session = AnnotationSession(args.image_dir)
     print(f"  {len(session.image_paths)} imagenes encontradas")
 
-    demo = build_ui(session, sam, classes)
+    if session.load_progress(args.output_dir):
+        annotated = sum(1 for p in session.image_paths if session.get_annotations(p))
+        print(f"  Progreso cargado: imagen {session.index + 1}, {annotated} anotadas, {len(session._discarded)} descartadas")
+    else:
+        print("  Sin progreso previo, empezando de cero")
+
+    demo = build_ui(session, sam, classes, args.output_dir)
     demo.launch(server_name="0.0.0.0", server_port=args.port, share=False)
 
 
