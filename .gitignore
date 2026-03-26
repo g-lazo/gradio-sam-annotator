@@ -1,12 +1,12 @@
 # Datos y modelos
-files/output/
-files/fotos/
-files/pics.zip
-files/pics/
-files/workspace.zip
-files/best.pt
-files/*.mp4
-files/*.pth
+output/
+fotos/
+pics.zip
+pics/
+workspace.zip
+*.pt
+*.pth
+*.mp4
 
 # Mac
 .DS_Store
