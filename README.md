@@ -22,7 +22,7 @@ pip install gradio transformers torch opencv-python numpy Pillow
 ## Uso
 
 ```bash
-python annotator.py \
+python app.py \
   --image_dir ./mis_imagenes \
   --output_dir ./output \
   --classes "coca_cola,monster,sabritas" \
